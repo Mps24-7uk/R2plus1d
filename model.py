@@ -1,48 +1,24 @@
-import cv2
-import torch
-import urllib.request
 
-import matplotlib.pyplot as plt
+# model.py
+import torch.nn as nn
+from torchvision.models.video import r2plus1d_18, R2Plus1D_18_Weights
 
-url, filename = ("https://github.com/pytorch/hub/raw/master/images/dog.jpg", "dog.jpg")
-urllib.request.urlretrieve(url, filename)
+class R2Plus1DModel(nn.Module):
+    """
+    3D CNN for fall vs no-fall classification.
+    Input shape: (B, C, T, H, W)
+    """
+    def __init__(self, num_classes: int = 2, pretrained: bool = True):
+        super().__init__()
+        if pretrained:
+            weights = R2Plus1D_18_Weights.KINETICS400_V1
+            self.backbone = r2plus1d_18(weights=weights)
+        else:
+            self.backbone = r2plus1d_18(weights=None)
+        # Replace final FC to match our classes
+        in_features = self.backbone.fc.in_features
+        self.backbone.fc = nn.Linear(in_features, num_classes)
 
-model_type = "DPT_Large"     # MiDaS v3 - Large     (highest accuracy, slowest inference speed)
-#model_type = "DPT_Hybrid"   # MiDaS v3 - Hybrid    (medium accuracy, medium inference speed)
-#model_type = "MiDaS_small"  # MiDaS v2.1 - Small   (lowest accuracy, highest inference speed)
-
-midas = torch.hub.load("intel-isl/MiDaS", model_type)
-
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-midas.to(device)
-midas.eval()
-
-
-midas_transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
-
-if model_type == "DPT_Large" or model_type == "DPT_Hybrid":
-    transform = midas_transforms.dpt_transform
-else:
-    transform = midas_transforms.small_transform
-
-
-img = cv2.imread(filename)
-img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-input_batch = transform(img).to(device)
-
-
-with torch.no_grad():
-    prediction = midas(input_batch)
-
-    prediction = torch.nn.functional.interpolate(
-        prediction.unsqueeze(1),
-        size=img.shape[:2],
-        mode="bicubic",
-        align_corners=False,
-    ).squeeze()
-
-output = prediction.cpu().numpy()
-
-plt.imshow(output)
-# plt.show()
+    def forward(self, x):
+        # x: (B, C, T, H, W)
+        return self.backbone(x)
