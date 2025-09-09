@@ -90,3 +90,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+# python export_onnx.py --ckpt ./run/exp1/best_model.pth --batch-size 1 --num-frames 12 --image-size 112 --opset 17
