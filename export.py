@@ -2,110 +2,90 @@
 import os
 import argparse
 import torch
+import torch.nn as nn
 
-# import your model class from model.py in the same folder
+# import your model class (from your repo)
 from model import R2Plus1DModel
 
 
-def resolve_paths(input_path: str):
-    """
-    If input_path is a folder, expect run/expX/best_model.pth inside it.
-    If input_path is a .pth file, use it directly and save ONNX next to it.
-    Returns (ckpt_path, onnx_path).
-    """
-    if os.path.isdir(input_path):
-        ckpt_path = os.path.join(input_path, "best_model.pth")
-        onnx_path = os.path.join(input_path, "best.onnx")
-    else:
-        if not input_path.endswith(".pth"):
-            raise ValueError("If input_path is a file, it must be a .pth checkpoint.")
-        ckpt_path = input_path
-        onnx_path = os.path.join(os.path.dirname(input_path), "best.onnx")
-
-    if not os.path.exists(ckpt_path):
-        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
-    return ckpt_path, onnx_path
+def strip_module_prefix(state_dict):
+    """Remove 'module.' prefix from DataParallel checkpoints if present."""
+    if not any(k.startswith("module.") for k in state_dict.keys()):
+        return state_dict
+    return {k.replace("module.", "", 1): v for k, v in state_dict.items()}
 
 
-def load_model(ckpt_path: str, device: torch.device) -> torch.nn.Module:
+def infer_num_classes_from_state(state_dict, default=2):
     """
-    Instantiate R2Plus1DModel and load weights from checkpoint.
-    Handles both raw state_dict and dict with 'model_state_dict'.
+    Try to infer num_classes from the final FC weight if present.
+    Falls back to 'default' if not found.
     """
-    model = R2Plus1DModel(num_classes=2, pretrained=False).to(device)
-    ckpt = torch.load(ckpt_path, map_location="cpu")
-
-    state_dict = ckpt.get("model_state_dict", ckpt)  # support raw state_dict or wrapped
-    # strict=False to be forgiving if extra keys exist
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    return model
+    for key in ("backbone.fc.weight", "fc.weight"):
+        if key in state_dict and isinstance(state_dict[key], torch.Tensor):
+            return int(state_dict[key].shape[0])
+    return default
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Export R2Plus1DModel to ONNX")
-    parser.add_argument(
-        "--input_path",
-        required=True,
-        help="Path to experiment folder (e.g. run/exp1) OR a .pth file."
-    )
-    parser.add_argument(
-        "--batch_size",
-        type=int,
-        default=1,
-        help="Dummy batch size for the exported graph (and for validation during export)."
-    )
-    parser.add_argument(
-        "--num_frames",
-        type=int,
-        default=12,
-        help="Temporal length (T). Use the same T as training (default 12)."
-    )
-    parser.add_argument(
-        "--image_size",
-        type=int,
-        default=112,
-        help="Input spatial size (H=W). Use 112 if you trained with 112x112."
-    )
-    parser.add_argument(
-        "--opset",
-        type=int,
-        default=17,
-        help="ONNX opset version (recommended 13–17)."
-    )
+    parser = argparse.ArgumentParser(description="Export R(2+1)D-18 .pth to ONNX.")
+    parser.add_argument("--ckpt", required=True, help="Path to checkpoint .pth")
+    parser.add_argument("--batch-size", type=int, required=True, help="Batch size for dummy input")
+    parser.add_argument("--num-frames", type=int, default=12, help="Temporal length T (default: 12)")
+    parser.add_argument("--image-size", type=int, default=112, help="Square input size H=W (default: 112)")
+    parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
     args = parser.parse_args()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    ckpt_path, onnx_path = resolve_paths(args.input_path)
+    print(f"[INFO] Using device: {device}")
 
-    # Build and load model
-    model = load_model(ckpt_path, device)
+    if not os.path.isfile(args.ckpt):
+        raise FileNotFoundError(f"Checkpoint not found: {args.ckpt}")
 
-    # Create a dummy input: (B, C, T, H, W)
-    dummy = torch.randn(
-        args.batch_size, 3, args.num_frames, args.image_size, args.image_size,
-        device=device
-    )
+    # Output path = same directory as checkpoint, named best.onnx (as requested)
+    out_dir = os.path.dirname(os.path.abspath(args.ckpt))
+    out_path = os.path.join(out_dir, "best.onnx")
+
+    # Load checkpoint
+    print(f"[INFO] Loading checkpoint: {args.ckpt}")
+    ckpt = torch.load(args.ckpt, map_location=device)
+    state_dict = ckpt.get("model_state_dict", ckpt)
+    state_dict = strip_module_prefix(state_dict)
+
+    # Build model and load weights
+    num_classes = infer_num_classes_from_state(state_dict, default=2)
+    print(f"[INFO] Inferred num_classes: {num_classes}")
+    model = R2Plus1DModel(num_classes=num_classes, pretrained=False).to(device)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+
+    # Dummy input: (B, C, T, H, W)
+    b = args.batch_size
+    c = 3
+    t = args.num_frames
+    h = w = args.image_size
+    dummy = torch.randn(b, c, t, h, w, device=device)
 
     # Export
+    input_names = ["input"]
+    output_names = ["logits"]
+    dynamic_axes = {
+        "input":  {0: "batch", 2: "time"},  # allow variable batch and time lengths
+        "logits": {0: "batch"},
+    }
+
+    print(f"[INFO] Exporting to ONNX: {out_path}")
     torch.onnx.export(
         model,
         dummy,
-        onnx_path,
+        out_path,
         export_params=True,
         opset_version=args.opset,
         do_constant_folding=True,
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={
-            "input": {"0": "batch"},   # make batch dimension dynamic
-            "output": {"0": "batch"}
-        },
+        input_names=input_names,
+        output_names=output_names,
+        dynamic_axes=dynamic_axes,
     )
-
-    print(f"[OK] Exported ONNX to: {onnx_path}")
-    print(f"      Device used: {device}")
-    print(f"      Shapes -> input: (B, 3, {args.num_frames}, {args.image_size}, {args.image_size})")
+    print(f"[OK] ONNX model saved at: {out_path}")
 
 
 if __name__ == "__main__":
