@@ -105,14 +105,14 @@ def run_batch(session: ort.InferenceSession, batch: np.ndarray) -> np.ndarray:
     outputs = session.run(None, {input_name: batch})
     return outputs[0]
 
-def main():
+def prediction(frame_folder):
     ap = argparse.ArgumentParser(description="ONNX inference for R(2+1)D-18 best.onnx")
     ap.add_argument("--model", required=True, help="Path to best.onnx")
     ap.add_argument("--input", required=True, help="Dir with frames OR dir of many subfolders")
     ap.add_argument("--batch-size", type=int, default=4, help="Batch size for clips")
     ap.add_argument("--num-frames", type=int, default=12, help="Frames per clip (T)")
     ap.add_argument("--image-size", type=int, default=112, help="Square resize (H=W)")
-    ap.add_argument("--device", default="cuda", choices=["auto", "cuda", "cpu"], help="Execution device")
+    ap.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"], help="Execution device")
     args = ap.parse_args()
 
     sess = select_session(args.model, device=args.device)
@@ -149,8 +149,8 @@ def main():
             print(f"{d} -> pred: {CLASS_NAMES[pred]}  "
                   f"p(fall)={p[0]:.4f}  p(no_fall)={p[1]:.4f}  conf={p[pred]:.4f}")
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
 
 

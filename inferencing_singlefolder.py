@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--input", required=True, help="Folder with >=12 frames")
     ap.add_argument("--num-frames", type=int, default=12, help="Temporal length T")
     ap.add_argument("--image-size", type=int, default=112, help="Square resize (H=W)")
-    ap.add_argument("--device", default="auto", choices=["auto", "cuda", "cpu"], help="Execution device")
+    ap.add_argument("--device", default="cuda", choices=["auto", "cuda", "cpu"], help="Execution device")
     args = ap.parse_args()
 
     sess = pick_session(args.model, device=args.device)
