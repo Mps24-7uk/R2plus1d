@@ -50,7 +50,7 @@ def reflect_pad_paths(frame_files: List[str], target_len: int) -> List[str]:
 def load_clip_numpy(
     seq_dir: str,
     num_frames: int = 12,
-    image_size: Tuple[int, int] = (112, 112),
+    image_size: Tuple[int, int] = (224, 224),
 ) -> np.ndarray:
     """
     Returns a numpy array shaped (C, T, H, W), float32, normalized with Kinetics stats.
@@ -109,9 +109,9 @@ def main():
     ap = argparse.ArgumentParser(description="ONNX inference for R(2+1)D-18 best.onnx")
     ap.add_argument("--model", required=True, help="Path to best.onnx")
     ap.add_argument("--input", required=True, help="Dir with frames OR dir of many subfolders")
-    ap.add_argument("--batch-size", type=int, default=4, help="Batch size for clips")
+    ap.add_argument("--batch-size", type=int, default=1, help="Batch size for clips")
     ap.add_argument("--num-frames", type=int, default=12, help="Frames per clip (T)")
-    ap.add_argument("--image-size", type=int, default=112, help="Square resize (H=W)")
+    ap.add_argument("--image-size", type=int, default=224, help="Square resize (H=W)")
     ap.add_argument("--device", default="cuda", choices=["auto", "cuda", "cpu"], help="Execution device")
     args = ap.parse_args()
 

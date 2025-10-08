@@ -12,7 +12,7 @@ CLASS_NAMES = ["fall", "no_fall"]  # index 0 -> fall, index 1 -> no_fall
 
 # ---------- Pre/Post ----------
 def load_clip_from_folder(folder, seq_len=12, height=224, width=224,
-                          mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)):
+                          mean=(0.43216, 0.394666, 0.37645), std=(0.22803, 0.22145, 0.216989)):
     paths = sorted(glob.glob(os.path.join(folder, "*")))
     if len(paths) < seq_len:
         raise ValueError(f"{folder}: need at least {seq_len} frames, found {len(paths)}")
@@ -201,16 +201,16 @@ def main():
     ap.add_argument("--seq-len", type=int, default=12)
     ap.add_argument("--height", type=int, default=224)
     ap.add_argument("--width", type=int, default=224)
-    ap.add_argument("--mean", type=float, nargs=3, default=(0.485, 0.456, 0.406))
-    ap.add_argument("--std", type=float, nargs=3, default=(0.229, 0.224, 0.225))
+    ap.add_argument("--mean", type=float, nargs=3, default=(0.43216, 0.394666, 0.37645))
+    ap.add_argument("--std", type=float, nargs=3, default=(0.22803, 0.22145, 0.216989))
     args = ap.parse_args()
 
     runner = TRTInference(args.engine)
 
-    if not os.path.isdir(args.root):
-        raise NotADirectoryError(f"Root path not found: {args.root}")
+    if not os.path.isdir(args.input):
+        raise NotADirectoryError(f"Root path not found: {args.input}")
 
-    subfolders = [f.path for f in os.scandir(args.root) if f.is_dir()]
+    subfolders = [f.path for f in os.scandir(args.input) if f.is_dir()]
     subfolders.sort()
 
     processed = 0
