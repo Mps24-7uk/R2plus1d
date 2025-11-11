@@ -28,7 +28,7 @@ class VideoFolderDataset(Dataset):
         self,
         root_dir: str,
         num_frames: int = 12,
-        image_size: Tuple[int, int] = (112, 112),
+        image_size: Tuple[int, int] = (224, 224),
         transform=None
     ):
         self.root_dir = root_dir
@@ -123,7 +123,7 @@ def create_train_val_loaders(
     batch_size: int = 4,
     num_workers: int = 0,
     num_frames: int = 12,
-    image_size: Tuple[int, int] = (112, 112),
+    image_size: Tuple[int, int] = (224, 224),
     transform=None,
     shuffle_train: bool = True,
 ):

@@ -104,7 +104,7 @@ def main():
     num_workers = 2
     lr          = 1e-4
     num_frames  = 12
-    image_size  = (112, 112)   # recommended for R(2+1)D pretrained
+    image_size  = (224, 224)   # recommended for R(2+1)D pretrained
     run_root    = "run"        # base folder to store experiments
     exp_name    = None         # set to e.g. "exp1" to force a name; else auto-increment
 
@@ -193,8 +193,7 @@ def main():
                 "best_val_loss": best_val_loss,
                 "best_val_acc": best_val_acc,
                 "model_state_dict": model.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-                "config": config,
+
             }
             torch.save(to_save, ckpt_path)
             print(f"[SAVE] New best model saved to {ckpt_path} "
