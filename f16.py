@@ -40,3 +40,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+## Convert your trained checkpoint to FP16 (roughly ~½ the size)
+#python tools/convert_to_fp16.py --ckpt run/exp1/best_model.pth
