@@ -1,62 +1,88 @@
 # tools/export_onnx.py
 import os
 import argparse
+from pathlib import Path
+
 import torch
 import torch.nn as nn
 
-from model import R2Plus1DModel  # your model class
+from model import R2Plus1DModel  # your video model
+
 
 def strip_module_prefix(state_dict):
+    """Remove a leading 'module.' from keys (from DataParallel)."""
     if not any(k.startswith("module.") for k in state_dict.keys()):
         return state_dict
     return {k.replace("module.", "", 1): v for k, v in state_dict.items()}
 
+
 def infer_num_classes_from_state(state_dict, default=2):
-    # Try common heads
+    """
+    Try to infer num_classes from the final Linear layer weight.
+    Falls back to 'default' if nothing sensible is found.
+    """
+    # Common final-layer keys
     for key in ("backbone.fc.weight", "fc.weight", "classifier.5.weight"):
-        if key in state_dict and isinstance(state_dict[key], torch.Tensor):
-            return int(state_dict[key].shape[0])
+        v = state_dict.get(key, None)
+        if isinstance(v, torch.Tensor) and v.ndim == 2:
+            return int(v.shape[0])
+
+    # Fallback: last 2D *.weight tensor (often the classifier head)
+    candidates = [
+        (k, v) for k, v in state_dict.items()
+        if k.endswith(".weight") and isinstance(v, torch.Tensor) and v.ndim == 2
+    ]
+    if candidates:
+        candidates.sort(key=lambda kv: kv[0])
+        return int(candidates[-1][1].shape[0])
+
     return default
 
+
 def main():
-    ap = argparse.ArgumentParser(description="Export pruned/FP16 R(2+1)D to ONNX.")
-    ap.add_argument("--ckpt", required=True, help="Path to checkpoint (.pth) e.g. run/exp1/best_model_f16.pth")
-    ap.add_argument("--batch-size", type=int, default=1, help="Dummy batch size")
-    ap.add_argument("--num-frames", type=int, default=12, help="Temporal length T")
-    ap.add_argument("--image-size", type=int, default=224, help="Square input size H=W")
-    ap.add_argument("--opset", type=int, default=17, help="ONNX opset")
-    ap.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16",
-                    help="Export graph weights/inputs as fp16 (CUDA recommended) or fp32 (CPU safe).")
-    ap.add_argument("--out", default=None, help="Output .onnx path (default: <ckpt_dir>/best.onnx)")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description="Export R2Plus1D model to ONNX (BS=1).")
+    parser.add_argument("--ckpt", required=True,
+                        help="Path to checkpoint (.pth) e.g. run/exp1/best_model_fp16.pth")
+    parser.add_argument("--out", default=None,
+                        help="Output ONNX path (default: <ckpt_dir>/best.onnx)")
+    parser.add_argument("--num-frames", type=int, default=12,
+                        help="Temporal length T used for dummy input")
+    parser.add_argument("--image-size", type=int, default=224,
+                        help="Square input size H=W")
+    parser.add_argument("--opset", type=int, default=17,
+                        help="ONNX opset version")
+    parser.add_argument("--dtype", choices=["fp16", "fp32"], default="fp16",
+                        help="Export graph in fp16 or fp32 (controls model + dummy dtype)")
+    args = parser.parse_args()
 
-    # Device logic: prefer CUDA for fp16, fallback to fp32 on CPU
-    cuda_ok = torch.cuda.is_available()
-    if args.dtype == "fp16" and not cuda_ok:
-        print("[WARN] CUDA not available; FP16 export on CPU is often unsupported. Falling back to FP32 export.")
-        args.dtype = "fp32"
+    # Fixed batch size = 1, dynamic time dimension
+    B = 1
+    C = 3
+    T = args.num_frames
+    H = W = args.image_size
 
-    device = torch.device("cuda" if cuda_ok else "cpu")
-    print(f"[INFO] Using device: {device}, export dtype: {args.dtype}")
+    # Use CUDA if available, but DO NOT silently change dtype
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[INFO] device={device}, requested export dtype={args.dtype}")
+    if args.dtype == "fp16" and device.type == "cpu":
+        print("[WARN] Exporting fp16 ONNX on CPU – may fail for unsupported ops, "
+              "but will NOT auto-fallback to fp32.")
 
-    if not os.path.isfile(args.ckpt):
-        raise FileNotFoundError(f"Checkpoint not found: {args.ckpt}")
+    ckpt_path = Path(args.ckpt)
+    if not ckpt_path.is_file():
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    out_dir = os.path.dirname(os.path.abspath(args.ckpt))
-    out_path = args.out or os.path.join(out_dir, "best.onnx")
+    out_path = Path(args.out) if args.out else ckpt_path.with_name("best.onnx")
+    print(f"[INFO] Loading checkpoint: {ckpt_path}")
 
-    # Load checkpoint
-    print(f"[INFO] Loading checkpoint: {args.ckpt}")
-    ckpt = torch.load(args.ckpt, map_location="cpu")
+    ckpt = torch.load(str(ckpt_path), map_location="cpu")
     state = ckpt.get("model_state_dict", ckpt)
     state = strip_module_prefix(state)
 
-    # Build model & load weights
+    # Build model and load weights
     num_classes = infer_num_classes_from_state(state, default=2)
-    print(f"[INFO] Inferred num_classes: {num_classes}")
+    print(f"[INFO] Inferred num_classes={num_classes}")
     model = R2Plus1DModel(num_classes=num_classes, pretrained=False)
-
-    # If weights are FP16, PyTorch will upcast on load where needed; export dtype set below.
     model.load_state_dict(state, strict=False)
     model.to(device)
     model.eval()
@@ -65,28 +91,24 @@ def main():
     if args.dtype == "fp16":
         model.half()
 
-    # Dummy input (B, C=3, T, H, W)
-    b = args.batch_size
-    c = 3
-    t = args.num_frames
-    h = w = args.image_size
-
-    dummy = torch.randn(b, c, t, h, w, device=device)
+    # Dummy input (B=1, C=3, T, H, W)
+    dummy = torch.randn(B, C, T, H, W, device=device)
     if args.dtype == "fp16":
         dummy = dummy.half()
 
+    # Names & dynamic axes: batch fixed, time dynamic
     input_names = ["input"]
     output_names = ["logits"]
     dynamic_axes = {
-        "input":  {0: "batch", 2: "time"},  # variable batch & time
-        "logits": {0: "batch"},
+        "input":  {2: "time"},  # only time is dynamic
+        "logits": {}            # fixed batch=1
     }
 
     print(f"[INFO] Exporting to ONNX: {out_path}")
     torch.onnx.export(
         model,
         dummy,
-        out_path,
+        str(out_path),
         export_params=True,
         opset_version=args.opset,
         do_constant_folding=True,
@@ -94,14 +116,10 @@ def main():
         output_names=output_names,
         dynamic_axes=dynamic_axes,
     )
-    print(f"[OK] ONNX saved: {out_path}")
+    print(f"[OK] Saved ONNX: {out_path}")
+    size_mb = out_path.stat().st_size / (1024 * 1024)
+    print(f"[INFO] ONNX size: {size_mb:.2f} MB")
+
 
 if __name__ == "__main__":
     main()
-
-
-# GPU available → export as FP16 (recommended for smallest graph + later TensorRT FP16)
-# python tools/export_onnx.py --ckpt run/exp1/best_model_f16.pth --dtype fp16 --num-frames 12 --image-size 224 --opset 17
-
-# CPU only → safely export as FP32 (fallback)
-# python tools/export_onnx.py --ckpt run/exp1/best_model_f16.pth --dtype fp32 --num-frames 12 --image-size 224 --opset 17
