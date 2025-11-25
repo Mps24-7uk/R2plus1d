@@ -81,7 +81,44 @@ def build_engine(
         print(f"[OK] Engine written to: {engine_path}")
         print(f"[INFO] Precision: {'FP16' if using_fp16 else 'FP32'} (requested: {precision.upper()})")
         print(f"[INFO] Profile min/opt/max: {min_shape} / {opt_shape} / {max_shape}")
-        print(f"[INFO] Workspace: {workspace
+        print(f"[INFO] Workspace: {workspace_gb} GB")
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Convert ONNX to TensorRT engine (grayscale-ready)")
+    ap.add_argument("--onnx", required=True, help="Path to best.onnx")
+    ap.add_argument("--engine", default="best.engine", help="Output engine path")
+    ap.add_argument("--precision", choices=["fp32", "fp16"], default="fp16",
+                    help="Build precision")
+    ap.add_argument("--min-batch", type=int, default=1)
+    ap.add_argument("--opt-batch", type=int, default=2)
+    ap.add_argument("--max-batch", type=int, default=4)
+    # 🔸 default 1 channel for grayscale R2+1D
+    ap.add_argument("--channels", type=int, default=1,
+                    help="Number of input channels (1 for grayscale, 3 for RGB)")
+    ap.add_argument("--seq-len", type=int, default=12)
+    ap.add_argument("--height", type=int, default=224)
+    ap.add_argument("--width", type=int, default=224)
+    ap.add_argument("--workspace-gb", type=float, default=2.0)
+    args = ap.parse_args()
+
+    build_engine(
+        onnx_path=args.onnx,
+        engine_path=args.engine,
+        precision=args.precision,
+        min_batch=args.min_batch,
+        opt_batch=args.opt_batch,
+        max_batch=args.max_batch,
+        channels=args.channels,
+        seq_len=args.seq_len,
+        height=args.height,
+        width=args.width,
+        workspace_gb=args.workspace_gb
+    )
+
+
+if __name__ == "__main__":
+    main()
 
 
 
